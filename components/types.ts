@@ -17,7 +17,7 @@ export interface ForecastItem {
 }
 
 export interface SearchResult {
-    id: number;
+    id: string;
     title: string;
     subtitle: string;
     description: string;

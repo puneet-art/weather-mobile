@@ -187,6 +187,7 @@ const WeatherView: React.FC<WeatherViewProps> = ({ darkMode }) => {
     const [weather, setWeather] = useState<WeatherData | null>(null);
     const [forecast, setForecast] = useState<ForecastItem[] | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
+    const [searchTime, setSearchTime] = useState<string | null>(null);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -215,13 +216,26 @@ const WeatherView: React.FC<WeatherViewProps> = ({ darkMode }) => {
         }
 
         setLoading(true);
+        setSearchTime(null);
         fadeAnim.setValue(0);
 
         try {
-            const [weatherData, forecastData] = await Promise.all([
-                ky.get(`${API_URL}/weather/current/${encodeURIComponent(city)}`).json<WeatherData>(),
-                ky.get(`${API_URL}/weather/forecast/${encodeURIComponent(city)}`).json<{ forecast: ForecastItem[] }>()
+            const [weatherRes, forecastRes] = await Promise.all([
+                ky.get(`${API_URL}/weather/current/${encodeURIComponent(city)}`),
+                ky.get(`${API_URL}/weather/forecast/${encodeURIComponent(city)}`)
             ]);
+
+            // Extract timing from Server-Timing header (take from first response)
+            const serverTiming = weatherRes.headers.get('Server-Timing');
+            if (serverTiming) {
+                const match = serverTiming.match(/dur=([\d.]+)/);
+                if (match) {
+                    setSearchTime(match[1]);
+                }
+            }
+
+            const weatherData = await weatherRes.json<WeatherData>();
+            const forecastData = await forecastRes.json<{ forecast: ForecastItem[] }>();
 
             const condition = (weatherData.description || 'clear').toLowerCase();
             let normalizedCondition = 'default';
@@ -289,6 +303,13 @@ const WeatherView: React.FC<WeatherViewProps> = ({ darkMode }) => {
                                     <Text style={styles.statText}>{weather.windSpeed} km/h</Text>
                                 </View>
                             </View>
+
+                            {searchTime && (
+                                <View style={styles.timingBadge}>
+                                    <Ionicons name="flash" size={10} color="#fff" />
+                                    <Text style={styles.timingText}>Server Response: {searchTime}ms</Text>
+                                </View>
+                            )}
                         </View>
                     </ImageBackground>
                 )}
@@ -426,6 +447,22 @@ const styles = StyleSheet.create({
         height: 15,
         backgroundColor: 'rgba(255,255,255,0.3)',
         marginHorizontal: 15,
+    },
+    timingBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        marginTop: 15,
+        gap: 6,
+    },
+    timingText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: '600',
+        textTransform: 'uppercase',
     },
     inputSection: {
         gap: 15,
