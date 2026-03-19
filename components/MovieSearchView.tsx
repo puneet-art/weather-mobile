@@ -42,6 +42,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     const [showFilters, setShowFilters] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [totalResults, setTotalResults] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
 
     // Actor Detail Modal State
     const [selectedActor, setSelectedActor] = useState<any>(null);
@@ -68,34 +69,18 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         }
     };
 
-    const fetchSearchResults = useCallback(async (isNewSearch = true) => {
-        console.log(`[Fetch] isNewSearch: ${isNewSearch}, pageRef: ${pageRef.current}, hasMoreRef: ${hasMoreRef.current}, loadingMoreRef: ${loadingMoreRef.current}`);
+    const fetchSearchResults = useCallback(async (targetPage = 1) => {
+        console.log(`[Fetch] targetPage: ${targetPage}, filterType: ${filterType}`);
         
-        if (isNewSearch) {
-            setSearchLoading(true);
-            pageRef.current = 1;
-            hasMoreRef.current = true;
-            loadingMoreRef.current = false;
-            setPage(1);
-            setHasMore(true);
-            setError(null);
-        } else {
-            if (loadingMoreRef.current || !hasMoreRef.current) {
-                console.log('[Fetch] Skipped: already loading or no more data');
-                return;
-            }
-            loadingMoreRef.current = true;
-            setLoadingMore(true);
-            setError(null);
-        }
+        setSearchLoading(true);
+        setError(null);
 
         try {
             const q = debouncedSearchQuery.trim() || '';
             const endpoint = filterType === 'Actors' ? 'actors' : (filterType === 'All' ? 'all' : 'films');
-            const currentPage = isNewSearch ? 1 : pageRef.current + 1;
             const limit = 20;
             
-            const params: any = { q, page: currentPage, limit, _t: Date.now() };
+            const params: any = { q, page: targetPage, limit, _t: Date.now() };
             if (endpoint === 'films' || endpoint === 'all') {
                 if (selectedGenre) params.genre = selectedGenre;
                 if (selectedYear) params.year = selectedYear;
@@ -121,6 +106,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             let data: any[] = [];
             let total = 0;
             let hasNext = false;
+            let totalPgs = 1;
 
             if (filterType === 'All') {
                 const films = (result.films?.data || []).map((f: any) => ({ ...f, type: 'Film' }));
@@ -128,13 +114,15 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 data = [...films, ...actors];
                 total = (result.films?.meta?.total || 0) + (result.actors?.meta?.total || 0);
                 hasNext = (result.films?.meta?.has_next_page || false) || (result.actors?.meta?.has_next_page || false);
+                totalPgs = Math.max(result.films?.meta?.total_pages || 1, result.actors?.meta?.total_pages || 1);
             } else {
                 data = result.data || [];
                 total = result.meta?.total || 0;
                 hasNext = result.meta?.has_next_page || false;
+                totalPgs = result.meta?.total_pages || 1;
             }
 
-            console.log(`[Fetch] Received ${data.length} items. hasNext: ${hasNext}, total: ${total}, currentPage: ${currentPage}`);
+            console.log(`[Fetch] Received ${data.length} items. totalPgs: ${totalPgs}, total: ${total}, page: ${targetPage}`);
 
             const mapped = data.map((item: any) => {
                 if (item.type === 'Film' || endpoint === 'films') {
@@ -159,26 +147,21 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 }
             });
 
-            if (isNewSearch) {
-                setSearchResults(mapped);
-                setTotalResults(total);
-            } else {
-                setSearchResults(prev => [...prev, ...mapped]);
-            }
-
-            // Update both ref and state
-            pageRef.current = currentPage;
-            hasMoreRef.current = hasNext;
-            setPage(currentPage);
+            setSearchResults(mapped);
+            setTotalResults(total);
+            setTotalPages(totalPgs);
+            setPage(targetPage);
             setHasMore(hasNext);
-            console.log(`[Fetch] Success! Page now: ${currentPage}, hasMore: ${hasNext}, items added: ${mapped.length}`);
+            
+            pageRef.current = targetPage;
+            hasMoreRef.current = hasNext;
+            
         } catch (e: any) {
             console.error('[Fetch] Error:', e);
             const errorMsg = e.message || 'Network error';
             setError(errorMsg);
         } finally {
             setSearchLoading(false);
-            loadingMoreRef.current = false;
             setLoadingMore(false);
         }
     }, [debouncedSearchQuery, filterType, selectedGenre, selectedYear, sortBy]);
@@ -220,19 +203,25 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     }, []);
 
     useEffect(() => {
-        fetchSearchResults(true);
+        fetchSearchResults(1);
     }, [fetchSearchResults]);
 
-    const handleLoadMore = useCallback(() => {
-        console.log(`[LoadMore] Called! pageRef: ${pageRef.current}, hasMoreRef: ${hasMoreRef.current}, loadingMoreRef: ${loadingMoreRef.current}`);
-        if (!loadingMoreRef.current && hasMoreRef.current) {
-            console.log(`[LoadMore] Triggering fetch for page ${pageRef.current + 1}`);
-            fetchSearchResults(false);
+    const handleNextPage = useCallback(() => {
+        if (page < totalPages) {
+            fetchSearchResults(page + 1);
         }
-    }, [fetchSearchResults]);
+    }, [page, totalPages, fetchSearchResults]);
+
+    const handlePrevPage = useCallback(() => {
+        if (page > 1) {
+            fetchSearchResults(page - 1);
+        }
+    }, [page, fetchSearchResults]);
+
+    const globalIndex = (idx: number) => (page - 1) * 20 + idx + 1;
 
 
-    const renderItem = ({ item }: { item: SearchResult }) => (
+    const renderItem = ({ item, index }: { item: SearchResult; index: number }) => (
         <TouchableOpacity
             activeOpacity={0.9}
             key={`${item.type}-${item.id}`}
@@ -240,16 +229,20 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             onPress={() => item.type === 'Film' ? fetchFilmDetails(item.id) : fetchActorDetails(item.id)}
         >
             <View style={styles.cardContent}>
-                {item.tag && item.tag !== 'Actor' ? (
-                    <View style={[styles.tagBadge, { 
-                        marginBottom: 8, 
-                        backgroundColor: darkMode ? 'rgba(240, 160, 64, 0.15)' : 'rgba(240, 160, 64, 0.1)', 
-                        borderColor: '#f0a040', 
-                        borderWidth: 0.5 
-                    }]}>
-                        <Text style={[styles.tagText, { color: '#f0a040' }]}>{item.tag}</Text>
+                <View style={styles.cardHeaderRow}>
+                    <View style={styles.indexBadge}>
+                        <Text style={styles.indexText}>#{globalIndex(index)}</Text>
                     </View>
-                ) : null}
+                    {item.tag && item.tag !== 'Actor' ? (
+                        <View style={[styles.tagBadge, { 
+                            backgroundColor: darkMode ? 'rgba(240, 160, 64, 0.15)' : 'rgba(240, 160, 64, 0.1)', 
+                            borderColor: '#f0a040', 
+                            borderWidth: 0.5 
+                        }]}>
+                            <Text style={[styles.tagText, { color: '#f0a040' }]}>{item.tag}</Text>
+                        </View>
+                    ) : null}
+                </View>
                 <Text style={[styles.cardTitle, darkMode ? styles.whiteText : styles.darkText]} numberOfLines={1}>{item.title}</Text>
                 <View style={styles.cardMetaRow}>
                     <Ionicons name={item.type === 'Film' ? "calendar-outline" : "location-outline"} size={12} color="#f0a040" />
@@ -273,7 +266,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                         placeholderTextColor={darkMode ? '#555' : '#aaa'}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
-                        onSubmitEditing={() => fetchSearchResults(true)}
+                        onSubmitEditing={() => fetchSearchResults(1)}
                         returnKeyType="search"
                     />
                     <TouchableOpacity 
@@ -433,43 +426,56 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         </View>
     );
     const renderFooter = () => {
-        console.log(`[Footer] loadingMore: ${loadingMore}, hasMore: ${hasMore}, results: ${searchResults.length}`);
-        if (loadingMore) {
-            return <ActivityIndicator size="small" color="#f0a040" style={{ marginVertical: 30 }} />;
-        }
-        
-        if (hasMore && searchResults.length > 0) {
-            return (
-                <TouchableOpacity 
-                    style={[styles.loadMoreButton, darkMode ? styles.darkLoadMore : styles.lightLoadMore]} 
-                    onPress={handleLoadMore}
-                >
-                    <Ionicons name="add-circle-outline" size={20} color="#f0a040" />
-                    <Text style={styles.loadMoreText}>Load More results</Text>
-                </TouchableOpacity>
-            );
-        }
+        if (searchLoading && searchResults.length === 0) return null;
 
-        if (!hasMore && searchResults.length > 0) {
-            return <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>End of results</Text>;
-        }
+        return (
+            <View style={styles.paginationSection}>
+                <View style={[styles.paginationContainer, darkMode ? styles.darkPagination : styles.lightPagination]}>
+                    <TouchableOpacity 
+                        style={[styles.pageButton, page <= 1 && styles.disabledPageButton]} 
+                        onPress={handlePrevPage}
+                        disabled={page <= 1}
+                    >
+                        <Ionicons name="chevron-back" size={20} color={page <= 1 ? (darkMode ? '#333' : '#ccc') : '#f0a040'} />
+                        <Text style={[styles.pageButtonText, page <= 1 && { color: darkMode ? '#333' : '#ccc' }]}>Prev</Text>
+                    </TouchableOpacity>
 
-        return null;
+                    <View style={styles.pageIndicator}>
+                        <Text style={[styles.pageIndicatorText, darkMode ? styles.whiteText : styles.darkText]}>
+                            Page <Text style={{ color: '#f0a040', fontWeight: 'bold' }}>{page}</Text> of {totalPages}
+                        </Text>
+                    </View>
+
+                    <TouchableOpacity 
+                        style={[styles.pageButton, page >= totalPages && styles.disabledPageButton]} 
+                        onPress={handleNextPage}
+                        disabled={page >= totalPages}
+                    >
+                        <Text style={[styles.pageButtonText, page >= totalPages && { color: darkMode ? '#333' : '#ccc' }]}>Next</Text>
+                        <Ionicons name="chevron-forward" size={20} color={page >= totalPages ? (darkMode ? '#333' : '#ccc') : '#f0a040'} />
+                    </TouchableOpacity>
+                </View>
+                
+                {searchResults.length > 0 && (
+                    <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>
+                        Showing {Math.min(totalResults, (page - 1) * 20 + 1)} - {Math.min(totalResults, page * 20)} of {totalResults}
+                    </Text>
+                )}
+            </View>
+        );
     };
 
     return (
         <View style={styles.container}>
             <FlatList
-                data={searchResults}
+                data={searchResults || []}
                 renderItem={renderItem}
                 keyExtractor={(item) => `${item.type}-${item.id}`}
                 numColumns={2}
                 columnWrapperStyle={styles.row}
                 contentContainerStyle={styles.flatListContent}
-                ListHeaderComponent={renderHeader}
-                ListFooterComponent={renderFooter}
-                onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
+                ListHeaderComponent={renderHeader()}
+                ListFooterComponent={renderFooter()}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 initialNumToRender={20}
@@ -478,8 +484,8 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 removeClippedSubviews={Platform.OS === 'android'}
                 style={{ flex: 1 }}
                 refreshing={searchLoading}
-                onRefresh={() => fetchSearchResults(true)}
-                extraData={searchResults}
+                onRefresh={() => fetchSearchResults(1)}
+                extraData={[searchResults, page]}
             />
 
             {/* Actor Detail Modal */}
@@ -912,6 +918,72 @@ const styles = StyleSheet.create({
     },
     filterChipText: {
         fontSize: 12,
+        fontWeight: '600',
+    },
+    cardHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    indexBadge: {
+        backgroundColor: 'rgba(240, 160, 64, 0.1)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(240, 160, 64, 0.3)',
+    },
+    indexText: {
+        color: '#f0a040',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    paginationSection: {
+        marginVertical: 30,
+        alignItems: 'center',
+    },
+    paginationContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 15,
+        padding: 5,
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    darkPagination: {
+        backgroundColor: '#1c2635',
+    },
+    lightPagination: {
+        backgroundColor: '#fff',
+    },
+    pageButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 15,
+        paddingVertical: 10,
+        borderRadius: 12,
+        gap: 5,
+    },
+    disabledPageButton: {
+        opacity: 0.5,
+    },
+    pageButtonText: {
+        color: '#f0a040',
+        fontSize: 14,
+        fontWeight: 'bold',
+    },
+    pageIndicator: {
+        paddingHorizontal: 15,
+        borderLeftWidth: 1,
+        borderRightWidth: 1,
+        borderColor: 'rgba(128,128,128,0.2)',
+    },
+    pageIndicatorText: {
+        fontSize: 14,
         fontWeight: '600',
     },
     loadMoreButton: {
