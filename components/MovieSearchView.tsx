@@ -69,10 +69,16 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         }
     };
 
-    const fetchSearchResults = useCallback(async (targetPage = 1) => {
-        console.log(`[Fetch] targetPage: ${targetPage}, filterType: ${filterType}`);
+    const fetchSearchResults = useCallback(async (targetPage = 1, isAppend = false) => {
+        console.log(`[Fetch] targetPage: ${targetPage}, filterType: ${filterType}, isAppend: ${isAppend}`);
         
-        setSearchLoading(true);
+        if (isAppend) {
+            setLoadingMore(true);
+            loadingMoreRef.current = true;
+        } else {
+            setSearchLoading(true);
+            setSearchResults([]); // Clear on new search
+        }
         setError(null);
 
         try {
@@ -147,7 +153,12 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 }
             });
 
-            setSearchResults(mapped);
+            if (isAppend) {
+                setSearchResults(prev => [...prev, ...mapped]);
+            } else {
+                setSearchResults(mapped);
+            }
+            
             setTotalResults(total);
             setTotalPages(totalPgs);
             setPage(targetPage);
@@ -163,6 +174,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         } finally {
             setSearchLoading(false);
             setLoadingMore(false);
+            loadingMoreRef.current = false;
         }
     }, [debouncedSearchQuery, filterType, selectedGenre, selectedYear, sortBy]);
 
@@ -206,19 +218,14 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         fetchSearchResults(1);
     }, [fetchSearchResults]);
 
-    const handleNextPage = useCallback(() => {
-        if (page < totalPages) {
-            fetchSearchResults(page + 1);
+    const handleLoadMore = useCallback(() => {
+        console.log(`[LoadMore] hasMore: ${hasMoreRef.current}, loadingMore: ${loadingMoreRef.current}, searchLoading: ${searchLoading}`);
+        if (!loadingMoreRef.current && hasMoreRef.current && !searchLoading) {
+            fetchSearchResults(pageRef.current + 1, true);
         }
-    }, [page, totalPages, fetchSearchResults]);
+    }, [fetchSearchResults, searchLoading]);
 
-    const handlePrevPage = useCallback(() => {
-        if (page > 1) {
-            fetchSearchResults(page - 1);
-        }
-    }, [page, fetchSearchResults]);
-
-    const globalIndex = (idx: number) => (page - 1) * 20 + idx + 1;
+    const globalIndex = (idx: number) => idx + 1;
 
 
     const renderItem = ({ item, index }: { item: SearchResult; index: number }) => (
@@ -426,43 +433,29 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         </View>
     );
     const renderFooter = () => {
-        if (searchLoading && searchResults.length === 0) return null;
-
-        return (
-            <View style={styles.paginationSection}>
-                <View style={[styles.paginationContainer, darkMode ? styles.darkPagination : styles.lightPagination]}>
-                    <TouchableOpacity 
-                        style={[styles.pageButton, page <= 1 && styles.disabledPageButton]} 
-                        onPress={handlePrevPage}
-                        disabled={page <= 1}
-                    >
-                        <Ionicons name="chevron-back" size={20} color={page <= 1 ? (darkMode ? '#333' : '#ccc') : '#f0a040'} />
-                        <Text style={[styles.pageButtonText, page <= 1 && { color: darkMode ? '#333' : '#ccc' }]}>Prev</Text>
-                    </TouchableOpacity>
-
-                    <View style={styles.pageIndicator}>
-                        <Text style={[styles.pageIndicatorText, darkMode ? styles.whiteText : styles.darkText]}>
-                            Page <Text style={{ color: '#f0a040', fontWeight: 'bold' }}>{page}</Text> of {totalPages}
-                        </Text>
-                    </View>
-
-                    <TouchableOpacity 
-                        style={[styles.pageButton, page >= totalPages && styles.disabledPageButton]} 
-                        onPress={handleNextPage}
-                        disabled={page >= totalPages}
-                    >
-                        <Text style={[styles.pageButtonText, page >= totalPages && { color: darkMode ? '#333' : '#ccc' }]}>Next</Text>
-                        <Ionicons name="chevron-forward" size={20} color={page >= totalPages ? (darkMode ? '#333' : '#ccc') : '#f0a040'} />
-                    </TouchableOpacity>
-                </View>
-                
-                {searchResults.length > 0 && (
-                    <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>
-                        Showing {Math.min(totalResults, (page - 1) * 20 + 1)} - {Math.min(totalResults, page * 20)} of {totalResults}
+        if (loadingMore) {
+            return (
+                <View style={[styles.paginationSection, { paddingBottom: 50 }]}>
+                    <ActivityIndicator size="large" color="#f0a040" />
+                    <Text style={[styles.loadingText, darkMode ? styles.greyText : styles.lightGreyText]}>
+                        Loading more results...
                     </Text>
-                )}
-            </View>
-        );
+                </View>
+            );
+        }
+
+        if (!hasMore && searchResults.length > 0) {
+            return (
+                <View style={styles.paginationSection}>
+                    <Ionicons name="checkmark-circle-outline" size={30} color={darkMode ? '#333' : '#ccc'} />
+                    <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>
+                        You've reached the end of the results.
+                    </Text>
+                </View>
+            );
+        }
+
+        return <View style={{ height: 100 }} />;
     };
 
     return (
@@ -476,16 +469,18 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 contentContainerStyle={styles.flatListContent}
                 ListHeaderComponent={renderHeader()}
                 ListFooterComponent={renderFooter()}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
-                initialNumToRender={20}
-                maxToRenderPerBatch={20}
-                windowSize={5}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={10}
                 removeClippedSubviews={Platform.OS === 'android'}
                 style={{ flex: 1 }}
                 refreshing={searchLoading}
                 onRefresh={() => fetchSearchResults(1)}
-                extraData={[searchResults, page]}
+                extraData={[searchResults, loadingMore, hasMore]}
             />
 
             {/* Actor Detail Modal */}
