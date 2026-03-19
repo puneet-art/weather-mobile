@@ -37,12 +37,13 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     const [searchTime, setSearchTime] = useState<string | null>(null);
     const [genres, setGenres] = useState<string[]>([]);
     const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
-    const [selectedYear, setSelectedYear] = useState<number | null>(null);
     const [sortBy, setSortBy] = useState('relevance');
     const [showFilters, setShowFilters] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [totalResults, setTotalResults] = useState(0);
     const [totalPages, setTotalPages] = useState(1);
+    const [showTypePicker, setShowTypePicker] = useState(false);
+
 
     // Actor Detail Modal State
     const [selectedActor, setSelectedActor] = useState<any>(null);
@@ -55,9 +56,11 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     const [filmModalVisible, setFilmModalVisible] = useState(false);
 
     // useRef for mutable pagination tracking (avoids stale closure bug)
+    const flatListRef = useRef<FlatList>(null);
     const pageRef = useRef(1);
     const hasMoreRef = useRef(true);
     const loadingMoreRef = useRef(false);
+
 
     const fetchGenres = async () => {
         try {
@@ -69,16 +72,10 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         }
     };
 
-    const fetchSearchResults = useCallback(async (targetPage = 1, isAppend = false) => {
-        console.log(`[Fetch] targetPage: ${targetPage}, filterType: ${filterType}, isAppend: ${isAppend}`);
+    const fetchSearchResults = useCallback(async (targetPage = 1) => {
+        console.log(`[Fetch] page: ${targetPage}, filterType: ${filterType}`);
         
-        if (isAppend) {
-            setLoadingMore(true);
-            loadingMoreRef.current = true;
-        } else {
-            setSearchLoading(true);
-            setSearchResults([]); // Clear on new search
-        }
+        setSearchLoading(true);
         setError(null);
 
         try {
@@ -89,7 +86,6 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             const params: any = { q, page: targetPage, limit, _t: Date.now() };
             if (endpoint === 'films' || endpoint === 'all') {
                 if (selectedGenre) params.genre = selectedGenre;
-                if (selectedYear) params.year = selectedYear;
                 if (sortBy !== 'relevance') params.sortBy = sortBy;
             }
 
@@ -153,12 +149,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 }
             });
 
-            if (isAppend) {
-                setSearchResults(prev => [...prev, ...mapped]);
-            } else {
-                setSearchResults(mapped);
-            }
-            
+            setSearchResults(mapped);
             setTotalResults(total);
             setTotalPages(totalPgs);
             setPage(targetPage);
@@ -173,10 +164,8 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             setError(errorMsg);
         } finally {
             setSearchLoading(false);
-            setLoadingMore(false);
-            loadingMoreRef.current = false;
         }
-    }, [debouncedSearchQuery, filterType, selectedGenre, selectedYear, sortBy]);
+    }, [debouncedSearchQuery, filterType, selectedGenre, sortBy]);
 
     const fetchActorDetails = async (actorId: number | string) => {
         setActorLoading(true);
@@ -219,13 +208,12 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     }, [fetchSearchResults]);
 
     const handleLoadMore = useCallback(() => {
-        console.log(`[LoadMore] hasMore: ${hasMoreRef.current}, loadingMore: ${loadingMoreRef.current}, searchLoading: ${searchLoading}`);
-        if (!loadingMoreRef.current && hasMoreRef.current && !searchLoading) {
-            fetchSearchResults(pageRef.current + 1, true);
+        if (!searchLoading && hasMoreRef.current) {
+            fetchSearchResults(pageRef.current + 1);
         }
     }, [fetchSearchResults, searchLoading]);
 
-    const globalIndex = (idx: number) => idx + 1;
+    const globalIndex = (idx: number) => (page - 1) * 20 + idx + 1;
 
 
     const renderItem = ({ item, index }: { item: SearchResult; index: number }) => (
@@ -287,37 +275,43 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 {showFilters && (
                     <View style={styles.advancedFiltersSection}>
                         <Text style={[styles.filterLabel, darkMode ? styles.whiteText : styles.darkText]}>Search In</Text>
-                        <View style={styles.filterRowInside}>
-                            {['All', 'Films', 'Actors'].map((type) => (
-                                <TouchableOpacity
-                                    key={type}
-                                    style={[
-                                        styles.filterButtonInline,
-                                        filterType === type ? styles.activeFilterButton : (darkMode ? styles.darkFilterButton : styles.lightFilterButton)
-                                    ]}
-                                    onPress={() => {
-                                        setFilterType(type);
-                                        if (type === 'All') {
-                                            setSelectedGenre(null);
-                                            setSelectedYear(null);
-                                        }
-                                        if (type === 'Actors') setSelectedGenre(null);
-                                    }}
-                                >
-                                    <Ionicons
-                                        name={type === 'All' ? 'grid-outline' : (type === 'Films' ? 'film-outline' : 'people-outline')}
-                                        size={14}
-                                        color={filterType === type ? '#fff' : (darkMode ? '#aaa' : '#666')}
-                                    />
-                                    <Text style={[
-                                        styles.filterButtonTextInline,
-                                        filterType === type ? styles.whiteText : (darkMode ? styles.greyText : styles.lightGreyText)
-                                    ]}>
-                                        {type}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
+                        <TouchableOpacity 
+                            style={[styles.dropdownTrigger, darkMode ? styles.darkCard : styles.lightCard]}
+                            onPress={() => setShowTypePicker(!showTypePicker)}
+                        >
+                            <View style={styles.dropdownInner}>
+                                <Ionicons 
+                                    name={filterType === 'All' ? 'grid-outline' : (filterType === 'Films' ? 'film-outline' : 'people-outline')} 
+                                    size={18} 
+                                    color="#f0a040" 
+                                />
+                                <Text style={[styles.dropdownValue, darkMode ? styles.whiteText : styles.darkText]}>{filterType}</Text>
+                            </View>
+                            <Ionicons name={showTypePicker ? "chevron-up" : "chevron-down"} size={20} color="#f0a040" />
+                        </TouchableOpacity>
+
+                        {showTypePicker && (
+                            <View style={[styles.dropdownMenu, darkMode ? styles.darkMenu : styles.lightMenu]}>
+                                {['All', 'Films', 'Actors'].map((type) => (
+                                    <TouchableOpacity
+                                        key={type}
+                                        style={[styles.dropdownOption, filterType === type && styles.activeDropdownOption]}
+                                        onPress={() => {
+                                            setFilterType(type);
+                                            setShowTypePicker(false);
+                                            if (type === 'Actors') setSelectedGenre(null);
+                                        }}
+                                    >
+                                        <Ionicons 
+                                            name={type === 'All' ? 'grid-outline' : (type === 'Films' ? 'film-outline' : 'people-outline')} 
+                                            size={16} 
+                                            color={filterType === type ? '#f0a040' : (darkMode ? '#aaa' : '#666')} 
+                                        />
+                                        <Text style={[styles.dropdownOptionText, darkMode ? styles.whiteText : styles.darkText, filterType === type && { color: '#f0a040' }]}>{type}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
 
                         {(filterType === 'Films' || filterType === 'All') && (
                             <>
@@ -325,8 +319,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsContainer}>
                                     {[
                                         { id: 'relevance', label: 'Relevance' },
-                                        { id: 'latest', label: 'Latest Release' },
-                                        { id: 'oldest', label: 'Oldest Release' }
+                                        { id: 'latest', label: 'Latest Release' }
                                     ].map((option) => (
                                         <TouchableOpacity
                                             key={option.id}
@@ -340,37 +333,6 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                                                 styles.filterChipText,
                                                 sortBy === option.id ? styles.whiteText : (darkMode ? styles.greyText : styles.lightGreyText)
                                             ]}>{option.label}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-
-                                <Text style={[styles.filterLabel, { marginTop: 20 }, darkMode ? styles.whiteText : styles.darkText]}>Year</Text>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsContainer}>
-                                    <TouchableOpacity
-                                        style={[
-                                            styles.filterChip,
-                                            !selectedYear ? styles.activeFilterChip : (darkMode ? styles.darkFilterChip : styles.lightFilterChip)
-                                        ]}
-                                        onPress={() => setSelectedYear(null)}
-                                    >
-                                        <Text style={[
-                                            styles.filterChipText,
-                                            !selectedYear ? styles.whiteText : (darkMode ? styles.greyText : styles.lightGreyText)
-                                        ]}>Any Year</Text>
-                                    </TouchableOpacity>
-                                    {[2024, 2023, 2022, 2021, 2020, 2019, 2018, 2010, 2000].map((year) => (
-                                        <TouchableOpacity
-                                            key={year}
-                                            style={[
-                                                styles.filterChip,
-                                                selectedYear === year ? styles.activeFilterChip : (darkMode ? styles.darkFilterChip : styles.lightFilterChip)
-                                            ]}
-                                            onPress={() => setSelectedYear(selectedYear === year ? null : year)}
-                                        >
-                                            <Text style={[
-                                                styles.filterChipText,
-                                                selectedYear === year ? styles.whiteText : (darkMode ? styles.greyText : styles.lightGreyText)
-                                            ]}>{year}</Text>
                                         </TouchableOpacity>
                                     ))}
                                 </ScrollView>
@@ -433,12 +395,12 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         </View>
     );
     const renderFooter = () => {
-        if (loadingMore) {
+        if (searchLoading && searchResults.length > 0) {
             return (
                 <View style={[styles.paginationSection, { paddingBottom: 50 }]}>
                     <ActivityIndicator size="large" color="#f0a040" />
                     <Text style={[styles.loadingText, darkMode ? styles.greyText : styles.lightGreyText]}>
-                        Loading more results...
+                        Loading Page {page + 1}...
                     </Text>
                 </View>
             );
@@ -449,7 +411,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 <View style={styles.paginationSection}>
                     <Ionicons name="checkmark-circle-outline" size={30} color={darkMode ? '#333' : '#ccc'} />
                     <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>
-                        You've reached the end of the results.
+                        End of results. Total: {totalResults}
                     </Text>
                 </View>
             );
@@ -461,6 +423,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     return (
         <View style={styles.container}>
             <FlatList
+                ref={flatListRef}
                 data={searchResults || []}
                 renderItem={renderItem}
                 keyExtractor={(item) => `${item.type}-${item.id}`}
@@ -470,7 +433,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 ListHeaderComponent={renderHeader()}
                 ListFooterComponent={renderFooter()}
                 onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
+                onEndReachedThreshold={0.01}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 initialNumToRender={10}
@@ -480,7 +443,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 style={{ flex: 1 }}
                 refreshing={searchLoading}
                 onRefresh={() => fetchSearchResults(1)}
-                extraData={[searchResults, loadingMore, hasMore]}
+                extraData={[searchResults, page]}
             />
 
             {/* Actor Detail Modal */}
@@ -1237,23 +1200,61 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
     },
-    filterRowInside: {
-        flexDirection: 'row',
-        gap: 8,
-        flexWrap: 'wrap',
-    },
-    filterButtonInline: {
+    dropdownTrigger: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 10,
-        gap: 6,
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 15,
         borderWidth: 1,
+        borderColor: 'rgba(240, 160, 64, 0.2)',
+        marginTop: 5,
     },
-    filterButtonTextInline: {
-        fontSize: 12,
+    dropdownInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    dropdownValue: {
+        fontSize: 16,
         fontWeight: '700',
+    },
+    dropdownMenu: {
+        marginTop: 8,
+        borderRadius: 15,
+        padding: 8,
+        elevation: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+        zIndex: 1000,
+    },
+    darkMenu: {
+        backgroundColor: '#1c2635',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    lightMenu: {
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#f1f5f9',
+    },
+    dropdownOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 10,
+        gap: 12,
+        marginBottom: 2,
+    },
+    activeDropdownOption: {
+        backgroundColor: 'rgba(240, 160, 64, 0.1)',
+    },
+    dropdownOptionText: {
+        fontSize: 15,
+        fontWeight: '600',
     },
 });
 
