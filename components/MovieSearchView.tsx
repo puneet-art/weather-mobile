@@ -13,6 +13,7 @@ import {
     Dimensions,
     Platform,
     ScrollView,
+    RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ky from 'ky';
@@ -34,7 +35,6 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     const [loadingMore, setLoadingMore] = useState(false);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
-    const [searchTime, setSearchTime] = useState<string | null>(null);
     const [genres, setGenres] = useState<string[]>([]);
     const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
     const [sortBy, setSortBy] = useState('relevance');
@@ -60,7 +60,17 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     const pageRef = useRef(1);
     const hasMoreRef = useRef(true);
     const loadingMoreRef = useRef(false);
+    const lastFetchParams = useRef<string>('');
 
+
+    // Helper to chunk results for the 2-column grid
+    const chunkResults = (arr: SearchResult[], size: number) => {
+        const chunked = [];
+        for (let i = 0; i < arr.length; i += size) {
+            chunked.push(arr.slice(i, i + size));
+        }
+        return chunked;
+    };
 
     const fetchGenres = async () => {
         try {
@@ -72,13 +82,26 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         }
     };
 
+
     const fetchSearchResults = useCallback(async (targetPage = 1) => {
+        // Prevent duplicate loads using refs
+        if (loadingMoreRef.current && targetPage > 1) return;
+        if (loadingMoreRef.current && targetPage === 1) return;
+
         console.log(`[Fetch] page: ${targetPage}, filterType: ${filterType}`);
         
-        setSearchLoading(true);
+        if (targetPage === 1) {
+            setSearchLoading(true);
+            setSearchResults([]); 
+        } else {
+            setLoadingMore(true);
+            loadingMoreRef.current = true;
+        }
+        
         setError(null);
 
         try {
+            const startTime = Date.now();
             const q = debouncedSearchQuery.trim() || '';
             const endpoint = filterType === 'Actors' ? 'actors' : (filterType === 'All' ? 'all' : 'films');
             const limit = 20;
@@ -94,13 +117,8 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
 
             const response = await ky.get(targetUrl, { 
                 searchParams: params,
-                timeout: 10000,
-                retry: 0,
-                headers: {
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                }
+                timeout: 8000,
+                retry: 0
             });
 
             const result: any = await response.json();
@@ -120,8 +138,13 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             } else {
                 data = result.data || [];
                 total = result.meta?.total || 0;
-                hasNext = result.meta?.has_next_page || false;
                 totalPgs = result.meta?.total_pages || 1;
+                hasNext = result.meta?.has_next_page || false;
+            }
+
+            // Safety check: if we got no data but API said hasNext, respect actual data length for future loads
+            if (data.length === 0 && targetPage > 1) {
+                hasNext = false;
             }
 
             console.log(`[Fetch] Received ${data.length} items. totalPgs: ${totalPgs}, total: ${total}, page: ${targetPage}`);
@@ -149,7 +172,12 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 }
             });
 
-            setSearchResults(mapped);
+            if (targetPage === 1) {
+                setSearchResults(mapped);
+            } else {
+                setSearchResults(prev => [...prev, ...mapped]);
+            }
+            
             setTotalResults(total);
             setTotalPages(totalPgs);
             setPage(targetPage);
@@ -164,8 +192,10 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             setError(errorMsg);
         } finally {
             setSearchLoading(false);
+            setLoadingMore(false);
+            loadingMoreRef.current = false;
         }
-    }, [debouncedSearchQuery, filterType, selectedGenre, sortBy]);
+    }, [debouncedSearchQuery, filterType, selectedGenre, sortBy]); // Removed searchLoading dependency
 
     const fetchActorDetails = async (actorId: number | string) => {
         setActorLoading(true);
@@ -208,12 +238,13 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
     }, [fetchSearchResults]);
 
     const handleLoadMore = useCallback(() => {
-        if (!searchLoading && hasMoreRef.current) {
+        if (!searchLoading && !loadingMore && hasMoreRef.current && searchResults.length > 0) {
+            console.log('[Pagination] Loading more... Next page:', pageRef.current + 1);
             fetchSearchResults(pageRef.current + 1);
         }
-    }, [fetchSearchResults, searchLoading]);
+    }, [searchLoading, loadingMore, fetchSearchResults]);
 
-    const globalIndex = (idx: number) => (page - 1) * 20 + idx + 1;
+    const globalIndex = (idx: number) => idx + 1;
 
 
     const renderItem = ({ item, index }: { item: SearchResult; index: number }) => (
@@ -250,7 +281,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         </TouchableOpacity>
     );
 
-    const renderHeader = () => (
+    const renderHeaderContent = () => (
         <View style={styles.headerComponent}>
             <View style={styles.searchInputContainer}>
                 <View style={[styles.searchOuter, darkMode ? styles.darkSearchOuter : styles.lightSearchOuter]}>
@@ -378,12 +409,6 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                     <Text style={[styles.resultsCount, darkMode ? styles.greyText : styles.lightGreyText]}>
                         {totalResults} {totalResults === 1 ? 'result' : 'results'} found
                     </Text>
-                    {searchTime && (
-                        <View style={styles.timingBadge}>
-                            <Ionicons name="flash-outline" size={12} color="#f0a040" />
-                            <Text style={styles.timingText}>{searchTime}ms</Text>
-                        </View>
-                    )}
                 </View>
                 {error && (
                     <View style={styles.errorContainer}>
@@ -394,13 +419,24 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
             </View>
         </View>
     );
-    const renderFooter = () => {
-        if (searchLoading && searchResults.length > 0) {
+    const renderFooterContent = () => {
+        if (loadingMore) {
             return (
                 <View style={[styles.paginationSection, { paddingBottom: 50 }]}>
                     <ActivityIndicator size="large" color="#f0a040" />
                     <Text style={[styles.loadingText, darkMode ? styles.greyText : styles.lightGreyText]}>
-                        Loading Page {page + 1}...
+                        Loading more...
+                    </Text>
+                </View>
+            );
+        }
+
+        if (searchLoading && searchResults.length === 0) {
+            return (
+                <View style={[styles.paginationSection, { marginTop: 100 }]}>
+                    <ActivityIndicator size="large" color="#f0a040" />
+                    <Text style={[styles.loadingText, darkMode ? styles.greyText : styles.lightGreyText]}>
+                        Searching...
                     </Text>
                 </View>
             );
@@ -411,7 +447,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
                 <View style={styles.paginationSection}>
                     <Ionicons name="checkmark-circle-outline" size={30} color={darkMode ? '#333' : '#ccc'} />
                     <Text style={[styles.endText, darkMode ? styles.greyText : styles.lightGreyText]}>
-                        End of results. Total: {totalResults}
+                        You've reached the end! {totalResults} results found.
                     </Text>
                 </View>
             );
@@ -422,29 +458,45 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
 
     return (
         <View style={styles.container}>
-            <FlatList
-                ref={flatListRef}
-                data={searchResults || []}
-                renderItem={renderItem}
-                keyExtractor={(item) => `${item.type}-${item.id}`}
-                numColumns={2}
-                columnWrapperStyle={styles.row}
-                contentContainerStyle={styles.flatListContent}
-                ListHeaderComponent={renderHeader()}
-                ListFooterComponent={renderFooter()}
-                onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.01}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-                initialNumToRender={10}
-                maxToRenderPerBatch={10}
-                windowSize={10}
-                removeClippedSubviews={Platform.OS === 'android'}
+            <ScrollView
+                ref={flatListRef as any}
                 style={{ flex: 1 }}
-                refreshing={searchLoading}
-                onRefresh={() => fetchSearchResults(1)}
-                extraData={[searchResults, page]}
-            />
+                contentContainerStyle={styles.flatListContent}
+                showsVerticalScrollIndicator={false}
+                onScroll={(e) => {
+                    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+                    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 150;
+                    if (isCloseToBottom) {
+                        handleLoadMore();
+                    }
+                }}
+                scrollEventThrottle={16}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={searchLoading}
+                        onRefresh={() => fetchSearchResults(1)}
+                        tintColor="#f0a040"
+                        colors={["#f0a040"]}
+                    />
+                }
+            >
+                {renderHeaderContent()}
+                
+                <View style={styles.resultsGrid}>
+                    {chunkResults(searchResults || [], 2).map((row, rowIndex) => (
+                        <View key={`row-${rowIndex}`} style={styles.row}>
+                            {row.map((item, colIndex) => (
+                                <View key={`${item.type}-${item.id}`} style={styles.gridColumn}>
+                                    {renderItem({ item, index: rowIndex * 2 + colIndex })}
+                                </View>
+                            ))}
+                            {row.length === 1 && <View style={styles.gridColumn} />}
+                        </View>
+                    ))}
+                </View>
+
+                {renderFooterContent()}
+            </ScrollView>
 
             {/* Actor Detail Modal */}
             <Modal
@@ -631,12 +683,142 @@ const styles = StyleSheet.create({
     },
     flatListContent: {
         flexGrow: 1,
-
         paddingHorizontal: 20,
         paddingBottom: 100,
     },
+    resultsGrid: {
+        marginTop: 10,
+    },
     row: {
+        flexDirection: 'row',
         justifyContent: 'space-between',
+        marginBottom: 15,
+    },
+    featuredSection: {
+        marginBottom: 30,
+        marginTop: 10,
+    },
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 15,
+        paddingHorizontal: 5,
+    },
+    sectionHeading: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
+    paginationDots: {
+        flexDirection: 'row',
+        gap: 6,
+    },
+    dot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    activeDot: {
+        backgroundColor: '#f0a040',
+        width: 20,
+    },
+    darkDot: {
+        backgroundColor: '#2d3748',
+    },
+    lightDot: {
+        backgroundColor: '#e2e8f0',
+    },
+    featuredList: {
+        paddingRight: 20,
+    },
+    featuredSlide: {
+        width: width - 40,
+        marginRight: 20,
+    },
+    featuredCard: {
+        height: 180,
+        borderRadius: 24,
+        padding: 20,
+        justifyContent: 'space-between',
+        borderWidth: 1,
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
+    },
+    darkFeaturedCard: {
+        backgroundColor: '#1c2635',
+        borderColor: '#2d3748',
+    },
+    lightFeaturedCard: {
+        backgroundColor: '#fff',
+        borderColor: '#f1f5f9',
+    },
+    featuredBadge: {
+        backgroundColor: '#f0a040',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        alignSelf: 'flex-start',
+    },
+    featuredBadgeText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold',
+        letterSpacing: 1,
+    },
+    featuredTextContent: {
+        marginTop: 10,
+    },
+    featuredYear: {
+        color: '#f0a040',
+        fontSize: 12,
+        fontWeight: '700',
+        marginBottom: 4,
+    },
+    featuredTitle: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#fff',
+        marginBottom: 8,
+    },
+    featuredDesc: {
+        fontSize: 13,
+        color: 'rgba(255,255,255,0.7)',
+        lineHeight: 18,
+    },
+    featuredFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 15,
+    },
+    featuredTag: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    featuredTagText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '600',
+    },
+    playButton: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: '#f0a040',
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 4,
     },
     searchInputContainer: {
         marginBottom: 20,
@@ -756,8 +938,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
-        paddingHorizontal: 4,
+        marginBottom: 25,
+        paddingHorizontal: 8,
+        marginTop: 10,
     },
     resultsCount: {
         fontSize: 15,
@@ -769,33 +952,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
     },
-    timingBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(240, 160, 64, 0.1)',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 8,
-        gap: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(240, 160, 64, 0.2)',
-    },
-    timingText: {
-        color: '#f0a040',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
     gridCard: {
-        width: '48%',
+        width: '100%',
         borderRadius: 20,
-        marginBottom: 20,
+        marginBottom: 10,
         overflow: 'hidden',
-        elevation: 8,
+        elevation: 10,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
         borderWidth: 1,
+    },
+    gridColumn: {
+        width: '47.5%', // Slightly less than 50% to account for gap
     },
     darkCard: {
         backgroundColor: '#1c2635',
