@@ -1,6 +1,8 @@
 import { Platform } from 'react-native';
 
-export const API_URL: string = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+// @ts-ignore
+const PROD_API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://movie-backend-1-9sjw.onrender.com'; 
+export const API_URL: string = __DEV__ ? (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000') : PROD_API_URL;
 
 export interface WeatherData {
     city: string;
