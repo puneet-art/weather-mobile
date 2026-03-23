@@ -8,14 +8,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "postinstall": "prisma generate",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "build:web": "expo export --platform web"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
-    "@prisma/client": "^7.4.0",
     "expo": "~54.0.33",
     "expo-status-bar": "~3.0.9",
     "ky": "^1.14.3",
@@ -28,7 +24,6 @@
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-native": "^0.73.0",
-    "prisma": "^7.4.0",
     "typescript": "^5.9.3"
   }
 }
