@@ -74,7 +74,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
 
     const fetchGenres = async () => {
         try {
-            const data: any = await ky.get(`${API_URL}/search/categories`).json();
+            const data: any = await ky.get(`${API_URL}/search/categories`, { timeout: 60000 }).json();
             const categories = Array.isArray(data) ? data.map((c: any) => typeof c === 'string' ? c : c.name) : [];
             setGenres(categories);
         } catch (e) {
@@ -117,7 +117,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
 
             const response = await ky.get(targetUrl, { 
                 searchParams: params,
-                timeout: 8000,
+                timeout: 60000,
                 retry: 0
             });
 
@@ -202,7 +202,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         setDetailModalVisible(true);
         setSelectedActor(null); // Reset detail view
         try {
-            const data = await ky.get(`${API_URL}/search/actors/${actorId}`).json();
+            const data = await ky.get(`${API_URL}/search/actors/${actorId}`, { timeout: 60000 }).json();
             setSelectedActor(data);
         } catch (e) {
             console.error('Failed to fetch actor details:', e);
@@ -218,7 +218,7 @@ const MovieSearchView: React.FC<MovieSearchViewProps> = ({ darkMode }) => {
         setFilmModalVisible(true);
         setSelectedFilm(null);
         try {
-            const data = await ky.get(`${API_URL}/search/films/${filmId}`).json();
+            const data = await ky.get(`${API_URL}/search/films/${filmId}`, { timeout: 60000 }).json();
             setSelectedFilm(data);
         } catch (e) {
             console.error('Failed to fetch film details:', e);

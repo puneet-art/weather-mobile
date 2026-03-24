@@ -221,8 +221,8 @@ const WeatherView: React.FC<WeatherViewProps> = ({ darkMode }) => {
 
         try {
             const [weatherRes, forecastRes] = await Promise.all([
-                ky.get(`${API_URL}/weather/current/${encodeURIComponent(city)}`),
-                ky.get(`${API_URL}/weather/forecast/${encodeURIComponent(city)}`)
+                ky.get(`${API_URL}/weather/current/${encodeURIComponent(city)}`, { timeout: 60000 }),
+                ky.get(`${API_URL}/weather/forecast/${encodeURIComponent(city)}`, { timeout: 60000 })
             ]);
 
             // Extract timing from Server-Timing header (take from first response)
